@@ -1,5 +1,5 @@
 # Use Maven image to execute build.
-FROM maven:3.6.3-openjdk-17 AS maven-build
+FROM maven:eclipse-temurin AS maven-build
 RUN mkdir phoebus-olog
 WORKDIR /phoebus-olog
 COPY . .
@@ -10,14 +10,17 @@ RUN mvn clean install \
     -Pdeployable-jar
 
 # Use smaller openjdk image for running.
-FROM openjdk:17
-# Run commands as user 'olog'
-RUN useradd -ms /bin/bash olog
-# Use previous maven-build image.
+FROM eclipse-temurin:21-jre-alpine AS olog
+RUN apk --no-cache add shadow bash
+RUN adduser -D -s /bin/bash olog
 COPY --from=maven-build /phoebus-olog/target /olog-target
-RUN chown olog:olog /olog-target
+COPY --from=maven-build /phoebus-olog/target/service-olog-*-SNAPSHOT.jar /olog-target/service-olog.jar
+RUN chown -R olog:olog /olog-target
+# Switch to non-root user
 USER olog
 WORKDIR /olog-target
-EXPOSE 8080
-EXPOSE 8181
-CMD java -jar service-olog-5.0.2.jar
+EXPOSE 8080 8181
+
+ENV JAVA_OPTS="-Xmx512m -Xms256m"
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar service-olog.jar"]
+CMD []  # Empty CMD allows for easy overrides if needed

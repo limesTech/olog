@@ -1,0 +1,21 @@
+version: "3.9"
+services:
+  olog:
+    image: ghcr.io/limestech/olog/service_olog:latest
+    network_mode: bridge
+    ports:
+      - "8080:8080"
+      - "8181:8181"
+    environment:
+      mongo.host: ${MONGODB}
+      elasticsearch.network.host: ${ELASTIC}
+    # Ensure that the elastic server is up before starting olog.
+    command: >
+      /bin/bash -c "
+          while ! curl -s -f ${ELASTIC}:9200/_cluster/health?wait_for_status=yellow;
+        do
+          echo Waiting for Elasticsearch;
+          sleep 1;
+        done;
+        java -jar service-olog.jar --spring.config.name=application-docker
+      "
