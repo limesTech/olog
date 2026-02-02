@@ -18,22 +18,27 @@
 
 package org.phoebus.olog;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.web.servlet.MockMvc;
+import org.apache.tika.detect.DefaultDetector;
+import org.apache.tika.detect.Detector;
+import org.mockito.Mockito;
+import org.phoebus.olog.websocket.WebSocketService;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
 
-import java.util.Base64;
+/**
+ * Sets up suitable mocks for {@link LogResourceTest}
+ */
+@SuppressWarnings("unused")
+@TestConfiguration
+public class LogResourceTestConfig {
 
-public abstract class ResourcesTestBase {
+    @Bean
+    public WebSocketService webSocketService(){
+        return Mockito.mock(WebSocketService.class);
+    }
 
-    @Autowired
-    protected MockMvc mockMvc;
-
-    @Autowired
-    protected ObjectMapper objectMapper;
-
-    protected static final String JSON = "application/json;charset=UTF8";
-
-    protected static final String AUTHORIZATION =
-            "Basic " + Base64.getEncoder().encodeToString("user:userPass".getBytes());
+    @Bean
+    public Detector detector(){
+        return new DefaultDetector();
+    }
 }

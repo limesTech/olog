@@ -16,24 +16,7 @@
  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  */
 
-package org.phoebus.olog;
+package org.phoebus.olog.entity.websocket;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.web.servlet.MockMvc;
-
-import java.util.Base64;
-
-public abstract class ResourcesTestBase {
-
-    @Autowired
-    protected MockMvc mockMvc;
-
-    @Autowired
-    protected ObjectMapper objectMapper;
-
-    protected static final String JSON = "application/json;charset=UTF8";
-
-    protected static final String AUTHORIZATION =
-            "Basic " + Base64.getEncoder().encodeToString("user:userPass".getBytes());
+public record WebSocketMessage(MessageType messageType, String payload) {
 }

@@ -6,15 +6,21 @@ import co.elastic.clients.elasticsearch._types.SortOrder;
 import co.elastic.clients.elasticsearch._types.query_dsl.BoolQuery;
 import co.elastic.clients.elasticsearch._types.query_dsl.BoolQuery.Builder;
 import co.elastic.clients.elasticsearch._types.query_dsl.ChildScoreMode;
+import co.elastic.clients.elasticsearch._types.query_dsl.DateRangeQuery;
 import co.elastic.clients.elasticsearch._types.query_dsl.DisMaxQuery;
 import co.elastic.clients.elasticsearch._types.query_dsl.ExistsQuery;
 import co.elastic.clients.elasticsearch._types.query_dsl.FuzzyQuery;
 import co.elastic.clients.elasticsearch._types.query_dsl.MatchPhraseQuery;
+import co.elastic.clients.elasticsearch._types.query_dsl.MultiMatchQuery;
 import co.elastic.clients.elasticsearch._types.query_dsl.NestedQuery;
+import co.elastic.clients.elasticsearch._types.query_dsl.Operator;
 import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 import co.elastic.clients.elasticsearch._types.query_dsl.RangeQuery;
+import co.elastic.clients.elasticsearch._types.query_dsl.TextQueryType;
 import co.elastic.clients.elasticsearch._types.query_dsl.WildcardQuery;
 import co.elastic.clients.elasticsearch.core.SearchRequest;
+import co.elastic.clients.json.JsonData;
+import org.phoebus.util.time.TimeParser;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -25,7 +31,8 @@ import java.text.MessageFormat;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
+import java.time.temporal.TemporalAmount;
+import java.time.temporal.UnsupportedTemporalTypeException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -33,6 +40,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.Optional;
+import java.util.TimeZone;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -46,8 +54,6 @@ import java.util.stream.Collectors;
 @Service
 public class LogSearchUtil {
 
-    private static final String MILLI_PATTERN = "yyyy-MM-dd HH:mm:ss.SSS";
-    public static final DateTimeFormatter MILLI_FORMAT = DateTimeFormatter.ofPattern(MILLI_PATTERN).withZone(ZoneId.systemDefault());
 
     @SuppressWarnings("unused")
     @Value("${elasticsearch.log.index:olog_logs}")
@@ -63,12 +69,14 @@ public class LogSearchUtil {
     private int maxSearchSize;
 
     private static final Logger LOGGER = Logger.getLogger(LogSearchUtil.class.getName());
+    private static final ZoneId UTC_ZONE_ID = ZoneId.of("UTC");
 
     /**
      * @param searchParameters - the various search parameters
      * @return A {@link SearchRequest} based on the provided search parameters
      */
     public SearchRequest buildSearchRequest(MultiValueMap<String, String> searchParameters) {
+        TimeZone timeZone = getTimezone(searchParameters);
         BoolQuery.Builder boolQueryBuilder = new Builder();
         boolean fuzzySearch = false;
         List<String> searchTerms = new ArrayList<>();
@@ -89,6 +97,8 @@ public class LogSearchUtil {
 
         for (Entry<String, List<String>> parameter : searchParameters.entrySet()) {
             switch (parameter.getKey().strip().toLowerCase()) {
+                case "query":
+                    return getFreeTextSearchRequest(searchParameters);
                 case "desc":
                 case "description":
                 case "text":
@@ -143,52 +153,20 @@ public class LogSearchUtil {
                     boolQueryBuilder.must(ownerQuery.build()._toQuery());
                     break;
                 case "tags":
-                    DisMaxQuery.Builder tagQuery = new DisMaxQuery.Builder();
-                    List<Query> tagsQueries = new ArrayList<>();
-                    for (String value : parameter.getValue()) {
-                        for (String pattern : value.split("[\\|,;]")) {
-                            tagsQueries.add(WildcardQuery.of(w -> w.field("tags.name")
-                                    .caseInsensitive(true)
-                                    .value(pattern.trim()))._toQuery());
-                        }
-                    }
-                    Query tagsQuery = tagQuery.queries(tagsQueries).build()._toQuery();
-                    NestedQuery nestedTagsQuery = NestedQuery.of(n -> n.path("tags").query(tagsQuery));
-                    boolQueryBuilder.must(nestedTagsQuery._toQuery());
+                    boolQueryBuilder.must(getTagsQuery(parameter));
                     break;
                 case "logbooks":
-                    DisMaxQuery.Builder logbookQuery = new DisMaxQuery.Builder();
-                    List<Query> logbooksQueries = new ArrayList<>();
-                    for (String value : parameter.getValue()) {
-                        for (String pattern : value.split("[\\|,;]")) {
-                            logbooksQueries.add(WildcardQuery.of(w -> w.field("logbooks.name")
-                                    .caseInsensitive(true)
-                                    .value(pattern.trim()))._toQuery());
-                        }
-                    }
-                    Query logbooksQuery = logbookQuery.queries(logbooksQueries).build()._toQuery();
-                    NestedQuery nestedLogbooksQuery = NestedQuery.of(n -> n.path("logbooks").query(logbooksQuery).scoreMode(ChildScoreMode.None));
-                    boolQueryBuilder.must(nestedLogbooksQuery._toQuery());
+                    boolQueryBuilder.must(getLogbooksQuery(parameter));
                     break;
                 case "start":
-                    // If there are multiple start times submitted select the earliest
-                    ZonedDateTime earliestStartTime = ZonedDateTime.now();
-                    for (String value : parameter.getValue()) {
-                        ZonedDateTime time = ZonedDateTime.from(MILLI_FORMAT.parse(value));
-                        earliestStartTime = earliestStartTime.isBefore(time) ? earliestStartTime : time;
-                    }
+                    ZonedDateTime startTime = determineDateAndTime(parameter, timeZone);
+                    start = startTime != null ? startTime : ZonedDateTime.now();
                     temporalSearch = true;
-                    start = earliestStartTime;
                     break;
                 case "end":
-                    // If there are multiple end times submitted select the latest
-                    ZonedDateTime latestEndTime = Instant.ofEpochMilli(Long.MIN_VALUE).atZone(ZoneId.systemDefault());
-                    for (String value : parameter.getValue()) {
-                        ZonedDateTime time = ZonedDateTime.from(MILLI_FORMAT.parse(value));
-                        latestEndTime = latestEndTime.isBefore(time) ? time : latestEndTime;
-                    }
+                    ZonedDateTime endTime = determineDateAndTime(parameter, timeZone);
+                    end = endTime != null ? endTime : Instant.ofEpochMilli(Long.MIN_VALUE).atZone(ZoneId.systemDefault());
                     temporalSearch = true;
-                    end = latestEndTime;
                     break;
                 case "includeevents":
                 case "includeevent":
@@ -230,11 +208,9 @@ public class LogSearchUtil {
                             // Quoted strings, or string containing space chars, will be mapped to a phrase query
                             if ((term.startsWith("\"") && term.endsWith("\""))) {
                                 levelPhraseSearchTerms.add(term.substring(1, term.length() - 1));
-                            }
-                            else if(term.contains(" ")){
+                            } else if (term.contains(" ")) {
                                 levelPhraseSearchTerms.add(term);
-                            }
-                            else {
+                            } else {
                                 levelSearchTerms.add(term);
                             }
                         }
@@ -304,6 +280,8 @@ public class LogSearchUtil {
             }
         }
 
+        ZonedDateTime _start = start;
+        ZonedDateTime _end = end;
         // Add the temporal queries
         if (temporalSearch) {
             // check that the start is before the end
@@ -311,13 +289,17 @@ public class LogSearchUtil {
                 DisMaxQuery.Builder temporalQuery = new DisMaxQuery.Builder();
                 RangeQuery.Builder rangeQuery = new RangeQuery.Builder();
                 // Add a query based on the create time
-                rangeQuery.field("createdDate").from(Long.toString(1000 * start.toEpochSecond()))
-                        .to(Long.toString(1000 * end.toEpochSecond()));
+                rangeQuery.date(DateRangeQuery.of(b ->
+                        b.field("createdDate").gte(JsonData.of(_start.toEpochSecond()).toString())
+                                .lte(JsonData.of(_end.toEpochSecond()).toString())
+                                        .format("epoch_second")));
                 if (includeEvents) {
                     RangeQuery.Builder eventsRangeQuery = new RangeQuery.Builder();
                     // Add a query based on the time of the associated events
-                    eventsRangeQuery.field("events.instant").from(Long.toString(1000 * start.toEpochSecond()))
-                            .to(Long.toString(1000 * end.toEpochSecond()));
+                    eventsRangeQuery.date(DateRangeQuery.of(b ->
+                            b.field("createdDate").gte(JsonData.of(_start.toEpochSecond()).toString())
+                                    .lte(JsonData.of(_end.toEpochSecond()).toString())
+                                    .format("epoch_second")));
                     NestedQuery.Builder nestedQuery = new NestedQuery.Builder();
                     nestedQuery.path("events").query(eventsRangeQuery.build()._toQuery());
 
@@ -336,11 +318,11 @@ public class LogSearchUtil {
         if (!searchTerms.isEmpty()) {
             if (fuzzySearch) {
                 searchTerms.stream().forEach(searchTerm ->
-                    boolQueryBuilder.must(FuzzyQuery.of(f -> f.field("description").value(searchTerm))._toQuery())
+                        boolQueryBuilder.must(FuzzyQuery.of(f -> f.field("description").value(searchTerm))._toQuery())
                 );
             } else {
                 searchTerms.stream().forEach(searchTerm ->
-                    boolQueryBuilder.must(WildcardQuery.of(w -> w.field("description").value(searchTerm))._toQuery())
+                        boolQueryBuilder.must(WildcardQuery.of(w -> w.field("description").value(searchTerm))._toQuery())
                 );
             }
         }
@@ -348,7 +330,7 @@ public class LogSearchUtil {
         // Add phrase queries for description key. Multiple search terms will be AND:ed.
         if (!descriptionPhraseSearchTerms.isEmpty()) {
             descriptionPhraseSearchTerms.stream().forEach(phraseSearchTerm ->
-                boolQueryBuilder.must(MatchPhraseQuery.of(m -> m.field("description").query(phraseSearchTerm))._toQuery())
+                    boolQueryBuilder.must(MatchPhraseQuery.of(m -> m.field("description").query(phraseSearchTerm))._toQuery())
             );
         }
 
@@ -356,11 +338,11 @@ public class LogSearchUtil {
         if (!titleSearchTerms.isEmpty()) {
             if (fuzzySearch) {
                 titleSearchTerms.stream().forEach(searchTerm ->
-                    boolQueryBuilder.must(FuzzyQuery.of(f -> f.field("title").value(searchTerm))._toQuery())
+                        boolQueryBuilder.must(FuzzyQuery.of(f -> f.field("title").value(searchTerm))._toQuery())
                 );
             } else {
                 titleSearchTerms.stream().forEach(searchTerm ->
-                    boolQueryBuilder.must(WildcardQuery.of(w -> w.field("title").value(searchTerm))._toQuery())
+                        boolQueryBuilder.must(WildcardQuery.of(w -> w.field("title").value(searchTerm))._toQuery())
                 );
             }
         }
@@ -368,7 +350,7 @@ public class LogSearchUtil {
         // Add phrase queries for title key. Multiple search terms will be AND:ed.
         if (!titlePhraseSearchTerms.isEmpty()) {
             titlePhraseSearchTerms.stream().forEach(phraseSearchTerm ->
-                boolQueryBuilder.must(MatchPhraseQuery.of(m -> m.field("title").query(phraseSearchTerm))._toQuery())
+                    boolQueryBuilder.must(MatchPhraseQuery.of(m -> m.field("title").query(phraseSearchTerm))._toQuery())
             );
         }
 
@@ -378,11 +360,11 @@ public class LogSearchUtil {
         if (!levelSearchTerms.isEmpty()) {
             if (fuzzySearch) {
                 levelSearchTerms.stream().forEach(searchTerm ->
-                    levelQueries.add(FuzzyQuery.of(f -> f.field("level").value(searchTerm))._toQuery())
+                        levelQueries.add(FuzzyQuery.of(f -> f.field("level").value(searchTerm))._toQuery())
                 );
             } else {
                 levelSearchTerms.stream().forEach(searchTerm ->
-                    levelQueries.add(WildcardQuery.of(w -> w.field("level").value(searchTerm))._toQuery())
+                        levelQueries.add(WildcardQuery.of(w -> w.field("level").value(searchTerm))._toQuery())
                 );
             }
 
@@ -396,7 +378,7 @@ public class LogSearchUtil {
         }
 
         // Level query may be a mix of quoted and unquoted terms, combine them here
-        if(!levelQueries.isEmpty()){
+        if (!levelQueries.isEmpty()) {
             levelQuery.queries(levelQueries);
             boolQueryBuilder.must(levelQuery.build()._toQuery());
         }
@@ -452,5 +434,127 @@ public class LogSearchUtil {
         //...but remove empty strings, which are "leftovers" when quoted terms are removed
         terms.addAll(remaining.stream().filter(t -> t.length() > 0).collect(Collectors.toList()));
         return terms;
+    }
+
+    protected Query getTagsQuery(Entry<String, List<String>> parameter) {
+        DisMaxQuery.Builder tagQuery = new DisMaxQuery.Builder();
+        List<Query> tagsQueries = new ArrayList<>();
+        for (String value : parameter.getValue()) {
+            for (String pattern : value.split("[\\|,;]")) {
+                tagsQueries.add(WildcardQuery.of(w -> w.field("tags.name")
+                        .caseInsensitive(true)
+                        .value(pattern.trim()))._toQuery());
+            }
+        }
+        Query tagsQuery = tagQuery.queries(tagsQueries).build()._toQuery();
+        NestedQuery nestedTagsQuery = NestedQuery.of(n -> n.path("tags").query(tagsQuery));
+        return nestedTagsQuery._toQuery();
+    }
+
+    protected Query getLogbooksQuery(Entry<String, List<String>> parameter) {
+        DisMaxQuery.Builder logbookQuery = new DisMaxQuery.Builder();
+        List<Query> logbooksQueries = new ArrayList<>();
+        for (String value : parameter.getValue()) {
+            for (String pattern : value.split("[\\|,;]")) {
+                logbooksQueries.add(WildcardQuery.of(w -> w.field("logbooks.name")
+                        .caseInsensitive(true)
+                        .value(pattern.trim()))._toQuery());
+            }
+        }
+        Query logbooksQuery = logbookQuery.queries(logbooksQueries).build()._toQuery();
+        NestedQuery nestedLogbooksQuery = NestedQuery.of(n -> n.path("logbooks").query(logbooksQuery).scoreMode(ChildScoreMode.None));
+        return nestedLogbooksQuery._toQuery();
+    }
+
+    private SearchRequest getFreeTextSearchRequest(MultiValueMap<String, String> searchParameters) {
+        BoolQuery.Builder builder = new Builder();
+        for (Entry<String, List<String>> parameter : searchParameters.entrySet()) {
+            switch (parameter.getKey().strip().toLowerCase()) {
+                case "query":
+                    String query = parameter.getValue().get(0);
+                    MultiMatchQuery multiMatchQuery = MultiMatchQuery.of(m ->
+                            m.query(query)
+                                    .fields("title", "description", "owner", "level")
+                                    .type(TextQueryType.CrossFields)
+                                    .operator(Operator.And));
+                    builder.must(multiMatchQuery._toQuery());
+                    break;
+                case "tags":
+                    builder.must(getTagsQuery(parameter));
+                    break;
+                case "logbooks":
+                    builder.must(getLogbooksQuery(parameter));
+                    break;
+            }
+        }
+
+        BoolQuery _hybridQuery = builder.build();
+        SearchRequest request =
+                SearchRequest.of(
+                        s ->
+                                s.index(ES_LOG_INDEX)
+                                        .query(_hybridQuery._toQuery())
+                                        .timeout("60s")
+                                        .size(10000)
+                                        .from(0));
+        return request;
+    }
+
+    /**
+     * Computes a UTC {@link ZonedDateTime} based on client provided start/end search parameter, and time zone,
+     * if specified.
+     *
+     * @param parameter The start or end search parameter
+     * @param timeZone  Client provided tz, or system default.
+     * @return A {@link ZonedDateTime} if search parameter can be parsed, otherwise <code>null</code>.
+     * @throws ResponseStatusException if client provided {@link TemporalAmount} specifier is invalid.
+     */
+    protected ZonedDateTime determineDateAndTime(Entry<String, List<String>> parameter, TimeZone timeZone) {
+        String value = parameter.getValue().get(0); // Even if client specifies start=, there is still one element in the parameter object
+        if (!value.isEmpty()) {
+            // If multiple time specifiers are provided by client, consider only first...
+            String timeSpecifier = value.split("[\\|,;]")[0];
+            if (!timeSpecifier.isEmpty()) {
+                Object time = TimeParser.parseInstantOrTemporalAmount(timeSpecifier, timeZone.toZoneId());
+                if (time instanceof Instant instant) {
+                    return ZonedDateTime.ofInstant(instant, UTC_ZONE_ID);
+                } else if (time instanceof TemporalAmount) {
+                    try {
+                        return ZonedDateTime.ofInstant(Instant.now().minus((TemporalAmount) time), timeZone.toZoneId());
+                    } catch (UnsupportedTemporalTypeException e) { // E.g. if client sends "months" or "years"
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, MessageFormat.format(TextUtil.UNSUPPORTED_DATE_TIME, timeSpecifier));
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Determines time zone based on client provided tz, if present.
+     *
+     * @param searchParameters Search parameters provided by client, may or may not include tz
+     * @return Client provided {@link TimeZone}, or system default.
+     * @throws IllegalArgumentException if client specified time zone identifier is invalid
+     */
+    protected TimeZone getTimezone(MultiValueMap<String, String> searchParameters) {
+        for (Entry<String, List<String>> parameter : searchParameters.entrySet()) {
+            if ("tz".equals(parameter.getKey().strip().toLowerCase())) {
+                String timezoneString = parameter.getValue().get(0);
+                if(timezoneString == null || timezoneString.isEmpty()){
+                    return TimeZone.getDefault();
+                }
+                ZoneId zoneId;
+                try {
+                    zoneId = ZoneId.of(timezoneString);
+                } catch (Exception e) {
+                    LOGGER.log(Level.WARNING, "Invalid time zone identifier \"" + timezoneString + "\"");
+                    throw new IllegalArgumentException("Invalid time zone identifier \"" + timezoneString + "\"");
+                }
+                return TimeZone.getTimeZone(zoneId);
+            }
+        }
+        return TimeZone.getDefault();
     }
 }
