@@ -10,6 +10,14 @@ services:
       mongo.host: ${MONGODB}
       elasticsearch.network.host: ${ELASTIC}
     # Ensure that the elastic server is up before starting olog.
+    healthcheck:
+      test: ["CMD-SHELL", "response=$(curl -kfsS http://localhost:8080/Olog) && \
+        echo \"$response\" | grep -q '\"elastic\" *: *{[^}]*\"status\" *: *\"Connected\"' && \
+        echo \"$response\" | grep -q 'state=CONNECTED'"]
+      interval: 10s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
     command: >
       /bin/bash -c "
           while ! curl -s -f ${ELASTIC}:9200/_cluster/health?wait_for_status=yellow;

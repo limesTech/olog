@@ -12,6 +12,14 @@ services:
     environment:
       mongo.host: mongo
       elasticsearch.network.host: elastic
+    healthcheck:
+      test: ["CMD-SHELL", "response=$(curl -kfsS http://localhost:8080/Olog) && \
+        echo \"$response\" | grep -q '\"elastic\" *: *{[^}]*\"status\" *: *\"Connected\"' && \
+        echo \"$response\" | grep -q 'state=CONNECTED'"]
+      interval: 10s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
     # Ensure that the elastic server is up before starting olog.
     command: >
       /bin/bash -c "
