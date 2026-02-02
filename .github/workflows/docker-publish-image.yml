@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - 'master'
+      - 'mesa-prod'
   workflow_dispatch:
 
 jobs:
