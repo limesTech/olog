@@ -12,6 +12,7 @@ RUN mvn clean install \
 # Use smaller openjdk image for running.
 FROM eclipse-temurin:25-jdk as olog
 # Run commands as user 'olog'
+RUN apt update && apt install -y ldap-utils
 RUN useradd -ms /bin/bash olog
 # Use previous maven-build image.
 COPY --from=maven-build /phoebus-olog/target /olog-target
