@@ -23,4 +23,6 @@ WORKDIR /olog-target
 EXPOSE 8080
 EXPOSE 8181
 ENTRYPOINT ["sh", "-c", "java -jar service-olog.jar"]
-CMD java -jar service-olog*.jar  # [] Empty CMD allows for easy overrides if needed
+CMD java -jar service-olog*.jar --spring.config.name=application-docker
+
+# [] Empty CMD allows for easy overrides if needed
