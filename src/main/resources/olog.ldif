@@ -27,7 +27,7 @@ objectClass: account
 objectClass: posixAccount
 description: User with guest role
 cn: guest
-userPassword: guest
+userPassword: $2a$12$.gd4p4gwfNd3S0I1giLWfuEdtBvHCg/B9gi7OmAsyNAF62eWg4xDS
 uidNumber: 23002
 gidNumber: 23002
 homeDirectory: /dev/null
