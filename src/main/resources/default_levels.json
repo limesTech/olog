@@ -1,9 +1,5 @@
 [
     {
-    "name": "Urgent",
-        "defaultLevel": false
-    },
-    {
         "name": "Suggestion",
         "defaultLevel": false
     },
@@ -12,15 +8,15 @@
         "defaultLevel": true
     },
     {
-        "name": "Request",
+        "name": "Warning",
         "defaultLevel": false
     },
     {
-        "name": "Problem",
+        "name": "Critical",
         "defaultLevel": false
     },
     {
-        "name": "Bad",
-        "defaultLevel": true
+        "name": "Solved",
+        "defaultLevel": false
     }
 ]

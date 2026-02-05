@@ -1,5 +1,26 @@
 [
     {
     "name": "alarm"
+    },
+    {
+    "name": "cryo"
+    },
+    {
+    "name": "rf"
+    },
+    {
+    "name": "vacuum"
+    },
+    {
+    "name": "laser"
+    },
+    {
+    "name": "beamline"
+    },
+    {
+    "name": "target"
+    },
+    {
+    "name": "source"
     }
 ]

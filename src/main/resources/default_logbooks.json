@@ -1,9 +1,22 @@
 [
     {
-        "name": "operations",
+        "name": "routine",
         "owner": "olog-logs"
     },
     {
-        "name": "controls"
+        "name": "maintenance",
+        "owner": "olog-logs"
+    },
+    {
+        "name": "incident",
+        "owner": "olog-logs"
+    },
+    {
+        "name": "assembly",
+        "owner": "olog-logs"
+    },
+    {
+        "name": "testing_components",
+        "owner": "olog-logs"
     }
 ]
