@@ -11,7 +11,7 @@ RUN mvn clean install \
 
 # Use smaller openjdk image for running.
 FROM eclipse-temurin:21-jre-alpine AS olog
-RUN apk --no-cache add shadow bash
+RUN apk --no-cache add shadow bash sudo openldap-clients
 RUN adduser -D -s /bin/bash olog
 COPY --from=maven-build /phoebus-olog/target /olog-target
 COPY --from=maven-build /phoebus-olog/target/service-olog-*-SNAPSHOT.jar /olog-target/service-olog.jar
